@@ -62,12 +62,14 @@
     this.$menu = $(this.options.menu);
     this.$appendTo = this.options.appendTo ? $(this.options.appendTo) : null;
     this.fitToElement = typeof this.options.fitToElement == 'boolean' ? this.options.fitToElement : false;
+    this.containerOffset  = this.options.containerOffset || function () { return 0 };
     this.shown = false;
     this.listen();
     this.showHintOnFocus = typeof this.options.showHintOnFocus == 'boolean' || this.options.showHintOnFocus === "all" ? this.options.showHintOnFocus : false;
     this.afterSelect = this.options.afterSelect;
     this.addItem = false;
     this.value = this.$element.val() || this.$element.text();
+    this.firstTime = true;
   };
 
   Typeahead.prototype = {
@@ -76,20 +78,20 @@
 
     select: function () {
       var val = this.$menu.find('.active').data('value');
-      this.$element.data('active', val);
-      if (this.autoSelect || val) {
+      if (val) {
+        this.$element.data('active', val);
         var newVal = this.updater(val);
         // Updater can be set to any random functions via "options" parameter in constructor above.
         // Add null check for cases when updater returns void or undefined.
         if (!newVal) {
           newVal = '';
         }
-        this.$element
-          .val(this.displayText(newVal) || newVal)
-          .text(this.displayText(newVal) || newVal)
-          .change();
-        this.afterSelect(newVal);
+
+        this
+          .elementSetText(newVal)
+          .afterSelect(newVal);
       }
+
       return this.hide();
     },
 
@@ -101,7 +103,14 @@
       this.source = source;
     },
 
-    show: function () {
+    activate: function () {
+      this.listenWindowEvents();
+      this.query = this.getDefaultQuery();
+      this.menu(this.source, false);
+    },
+
+    show: function (activeOption) {
+      var $window = $(window);
       var pos = $.extend({}, this.$element.position(), {
         height: this.$element[0].offsetHeight
       });
@@ -135,9 +144,26 @@
       var newTop = dropup ? 'auto' : (pos.top + pos.height + scrollHeight);
       var right = $(element).hasClass('dropdown-menu-right');
       var newLeft = right ? 'auto' : pos.left;
+      var maxHeight = 'auto';
+
+      if (!dropup) {
+        maxHeight = $window.height() - newTop + $window.scrollTop()
+                        - this.containerOffset() - 20;
+
+        maxHeight = maxHeight < 115 ? 115 : maxHeight;
+      }
+
       // it seems like setting the css is a bad idea (just let Bootstrap do it), but I'll keep the old
       // logic in place except for the dropup/right-align cases.
-      element.css({ top: newTop, left: newLeft }).show();
+      element.css({ top: newTop, left: newLeft, maxHeight: maxHeight }).show();
+
+      if (activeOption) {
+        this.$menu.scrollTop(
+          activeOption.position().top
+          - (this.$menu.height() / 2)
+          - (activeOption.height() / 2)
+        );
+      }
 
       if (this.options.fitToElement === true) {
           element.css("width", this.$element.outerWidth() + "px");
@@ -149,8 +175,16 @@
 
     hide: function () {
       this.$menu.hide();
+      this.stopListenWindowEvents();
+
+      this.elementSetText(this.$element.data('active'))
+
       this.shown = false;
       return this;
+    },
+
+    getDefaultQuery: function () {
+      return this.$element.val() || this.$element.text() || ''
     },
 
     lookup: function (query) {
@@ -158,7 +192,7 @@
       if (typeof(query) != 'undefined' && query !== null) {
         this.query = query;
       } else {
-        this.query = this.$element.val() || this.$element.text() || '';
+        this.query = this.getDefaultQuery();
       }
 
       if (this.query.length < this.options.minLength && !this.options.showHintOnFocus) {
@@ -188,25 +222,35 @@
       items = this.sorter(items);
 
       if (!items.length && !this.options.addItem) {
-        return this.shown ? this.hide() : this;
+        items.push({
+          __type: 'message',
+          text: 'No results matched "' + this.query + '"'
+        });
       }
 
-      if (items.length > 0) {
-        this.$element.data('active', items[0]);
-      } else {
-        this.$element.data('active', null);
-      }
+      return this.menu(items);
+    },
+
+    menu: function (items, highlight) {
+      var active;
 
       // Add item
       if (this.options.addItem){
         items.push(this.options.addItem);
       }
 
-      if (this.options.items == 'all') {
-        return this.render(items).show();
-      } else {
-        return this.render(items.slice(0, this.options.items)).show();
+      items = this.options.items == 'all'
+        ? items
+        : items.slice(0, this.options.items);
+
+      active = this.render(items, highlight);
+
+      if (this.firstTime && active) {
+        this.firstTime = false;
+        this.$element.data('active', active.data('value'));
       }
+
+      return this.show(active);
     },
 
     matcher: function (item) {
@@ -256,12 +300,14 @@
       return html.append(document.createTextNode(item)).html();
     },
 
-    render: function (items) {
+    render: function (items, highlight) {
       var that = this;
       var self = this;
       var activeFound = false;
       var data = [];
       var _category = that.options.separator;
+
+      highlight = highlight !== false;
 
       $.each(items, function (key,value) {
         // inject separator
@@ -290,27 +336,57 @@
           return $(that.options.headerDivider)[0];
         }
 
+        if ((item.__type || false) == 'message') {
+          i = $(that.options.headerHtml).text(item.text);
+
+          if (data.length == 1) {
+            activeFound = i;
+          }
+
+          return i[0];
+        }
+
         var text = self.displayText(item);
         i = $(that.options.item).data('value', item);
-        i.find('a').html(that.highlighter(text, item));
-        if (text == self.$element.val()) {
+        i.find('a').html(highlight ? that.highlighter(text, item) : text);
+        if (text && text == self.$element.val()) {
           i.addClass('active');
-          self.$element.data('active', item);
-          activeFound = true;
+          activeFound = i;
         }
         return i[0];
       });
 
       if (this.autoSelect && !activeFound) {
-        items.filter(':not(.dropdown-header)').first().addClass('active');
-        this.$element.data('active', items.first().data('value'));
+        activeFound = items
+          .filter(':not(.dropdown-header)')
+          .first()
+          .addClass('active');
       }
       this.$menu.html(items);
-      return this;
+
+      return activeFound;
     },
 
     displayText: function (item) {
-      return typeof item !== 'undefined' && typeof item.name != 'undefined' && item.name || item;
+      return typeof item !== 'undefined' && typeof item.name != 'undefined' && item.name || '';
+    },
+
+    selectText: function () {
+      var element = this.$element[0];
+      setTimeout(function () { element.select() }, 0);
+
+      return this;
+    },
+
+    elementSetText: function (item) {
+      this.value = (item && item.id) ? this.displayText(item) : '';
+      this
+        .$element
+        .val(this.value)
+        .text(this.value)
+        .change();
+
+      return this;
     },
 
     next: function (event) {
@@ -337,6 +413,7 @@
 
     listen: function () {
       this.$element
+        .on('click',    $.proxy(this.elementClick, this))
         .on('focus',    $.proxy(this.focus, this))
         .on('blur',     $.proxy(this.blur, this))
         .on('keypress', $.proxy(this.keypress, this))
@@ -348,13 +425,26 @@
       }
 
       this.$menu
-        .on('click', $.proxy(this.click, this))
+        .on('click', 'li', $.proxy(this.click, this))
         .on('mouseenter', 'li', $.proxy(this.mouseenter, this))
         .on('mouseleave', 'li', $.proxy(this.mouseleave, this))
         .on('mousedown', $.proxy(this.mousedown,this));
     },
 
+    listenWindowEvents: function () {
+      $(window).on(
+        'resize.typeahead scroll.typeahead',
+        $.proxy(this.show, this)
+      );
+    },
+
+    stopListenWindowEvents: function() {
+      $(window).off('resize.typeahead scroll.typeahead');
+    },
+
     destroy : function () {
+      this.stopListenWindowEvents();
+
       this.$element.data('typeahead',null);
       this.$element.data('active',null);
       this.$element
@@ -386,6 +476,11 @@
 
       switch (e.keyCode) {
         case 9: // tab
+          if (this.shown) {
+            this.select();
+            this.$element.focus();
+          }
+          break;
         case 13: // enter
         case 27: // escape
           e.preventDefault();
@@ -409,8 +504,13 @@
 
     keydown: function (e) {
       this.suppressKeyPressRepeat = ~$.inArray(e.keyCode, [40,38,9,13,27]);
-      if (!this.shown && e.keyCode == 40) {
-        this.lookup();
+      if (!this.shown) {
+          if (e.keyCode == 40) {
+            this.selectText();
+            this.activate();
+          } else if (e.keyCode == 13) {
+            e.preventDefault();
+          }
       } else {
         this.move(e);
       }
@@ -424,10 +524,16 @@
     input: function (e) {
       // This is a fixed for IE10/11 that fires the input event when a placehoder is changed
       // (https://connect.microsoft.com/IE/feedback/details/810538/ie-11-fires-input-event-on-focus)
-      var currentValue = this.$element.val() || this.$element.text();
+      var currentValue = this.$element.val();// || this.$element.text();
       if (this.value !== currentValue) {
         this.value = currentValue;
-        this.lookup();
+
+        if (!currentValue) {
+          this.query = '';
+          this.menu(this.source, false);
+        } else {
+          this.lookup();
+        }
       }
     },
 
@@ -444,9 +550,16 @@
           break;
 
         case 9: // tab
+          this.activate();
+          break;
+
         case 13: // enter
-          if (!this.shown) return;
-          this.select();
+          if (this.shown) {
+            this.select();
+            this.selectText();
+          } else {
+            this.activate();
+          }
           break;
 
         case 27: // escape
@@ -461,17 +574,16 @@
     focus: function (e) {
       if (!this.focused) {
         this.focused = true;
-        if (this.options.showHintOnFocus && this.skipShowHintOnFocus !== true) {
-          if(this.options.showHintOnFocus === "all") {
-            this.lookup(""); 
-          } else {
-            this.lookup();
-          }
-        }
       }
-      if (this.skipShowHintOnFocus) {
-        this.skipShowHintOnFocus = false;
+    },
+
+    elementClick: function (e) {
+      if (this.shown) {
+        return;
       }
+
+      this.selectText();
+      this.activate();
     },
 
     blur: function (e) {
@@ -490,15 +602,16 @@
     click: function (e) {
       e.preventDefault();
       this.skipShowHintOnFocus = true;
+
+      this.$menu.find('.active').removeClass('active');
+      $(e.currentTarget).addClass('active');
+
       this.select();
-      this.$element.focus();
-      this.hide();
+      this.selectText();
     },
 
     mouseenter: function (e) {
       this.mousedover = true;
-      this.$menu.find('.active').removeClass('active');
-      $(e.currentTarget).addClass('active');
     },
 
     mouseleave: function (e) {
@@ -510,6 +623,8 @@
      * We track the mousedown for IE. When clicking on the menu scrollbar, IE makes the input blur thus hiding the menu.
      */
     mousedown: function (e) {
+      e.preventDefault();
+
       this.mouseddown = true;
       this.$menu.one("mouseup", function(e){
         // IE won't fire this, but FF and Chrome will so we reset our flag for them here
