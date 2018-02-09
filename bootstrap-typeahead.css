@@ -7,6 +7,7 @@
     top: 50%;
     right: 0;
     margin-top: -2px;
+    cursor: pointer;
     -webkit-transform: translateX(-12px);
     transform: translateX(-12px);
     -webkit-transition: opacity ease-in-out .15s;
