@@ -33,7 +33,6 @@
     border-color: #adadad;
 }
 
-
 .typeahead-wrapper .typeahead-input:focus {
     padding-left: 2px;
     padding-right: 2px;
@@ -53,4 +52,10 @@
     -webkit-transition: opacity ease-in-out .15s, transform ease-in-out .15s;
     -o-transition: opacity ease-in-out .15s, transform ease-in-out .15s;
     transition: opacity ease-in-out .15s, transform ease-in-out .15s;
+}
+
+.typeahead-wrapper .typeahead-input[disabled],
+.typeahead-wrapper .typeahead-input[disabled] + .caret,
+.typeahead-wrapper .typeahead-input[disabled] + * + .caret {
+    cursor: not-allowed;
 }
